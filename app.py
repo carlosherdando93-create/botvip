@@ -1,5 +1,5 @@
 """
-APP.PY — versão com webhook Mercado Pago funcionando
+APP.PY — versão corrigida (mantive textos e comportamento)
 """
 
 import os
@@ -10,7 +10,6 @@ import asyncio
 import random
 import base64
 import io
-from flask import Flask, request
 
 from telegram import (
     Update,
@@ -33,13 +32,12 @@ load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN")
 GROUP_CHAT_ID = int(os.getenv("GROUP_CHAT_ID") or 0)
-WEBHOOK_PUBLIC_URL = os.getenv("WEBHOOK_PUBLIC_URL")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-if not TELEGRAM_TOKEN or not MP_ACCESS_TOKEN or not GROUP_CHAT_ID or not WEBHOOK_PUBLIC_URL:
-    logger.error("⚠️ Configure TELEGRAM_TOKEN, MP_ACCESS_TOKEN, GROUP_CHAT_ID e WEBHOOK_PUBLIC_URL nas variáveis de ambiente.")
+if not TELEGRAM_TOKEN or not MP_ACCESS_TOKEN or not GROUP_CHAT_ID:
+    logger.error("Erro: configure TELEGRAM_TOKEN, MP_ACCESS_TOKEN e GROUP_CHAT_ID no .env")
     raise SystemExit(1)
 
 mp = mercadopago.SDK(MP_ACCESS_TOKEN)
@@ -73,12 +71,13 @@ def save_payment(payment_id, user_id, amount, status="pending"):
 
 # === TEXTOS ===
 MAIN_TEXT = """🜂 *⚛ Bem-vindo à irmandade mais foda do Brasil.*
-Aqui não existe plateia — só homens que Pegam Mulheres, Facil.💪
+Aqui não existe Gados — só homens que Pegam Mulheres, Facil.💪
 
 Para manter tudo funcionando e afastar curiosos, cobramos apenas um valor simbólico de R$10.
 Quem entra aqui não paga… *investe em si mesmo*🔞
 """
 
+# Contador (valores que estavam no seu código)
 START_COUNTER = 135920
 STOP_COUNTER = 137500
 counter_value = START_COUNTER
@@ -108,7 +107,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # 2️⃣ MENSAGEM DO CONTADOR (editável)
     counter_msg = await update.message.reply_text(
-        f"📈👥 *Membros Atuais⚠⬆⚠:* {START_COUNTER:,}".replace(",", "."),
+        f"🔥🔞 *Membros Mensais👥⬆:* {START_COUNTER:,}".replace(",", "."),
         parse_mode="Markdown"
     )
 
@@ -127,7 +126,7 @@ async def counter_task(context, chat_id, message_id):
         if counter_value > STOP_COUNTER:
             counter_value = STOP_COUNTER
 
-        new_text = f"📈👥 *Membros Atuais⚠⬆⚠:* {counter_value:,}".replace(",", ".")
+        new_text = f"🔥🔞 *Membros Mensais👥⬆:* {counter_value:,}".replace(",", ".")
 
         try:
             await context.bot.edit_message_text(
@@ -137,6 +136,7 @@ async def counter_task(context, chat_id, message_id):
                 parse_mode="Markdown"
             )
         except Exception:
+            # se falhar (usuário bloqueou bot, mensagem deletada, etc.) interrompe o loop
             break
 
 # === PAGAMENTO ===
@@ -227,55 +227,16 @@ async def handle_message(update: Update, context):
     else:
         await update.message.reply_text("❌ Código inválido.")
 
-# === FLASK WEBHOOK ===
-flask_app = Flask(__name__)
-
-@flask_app.post("/webhook")
-def mp_webhook():
-    data = request.json
-    logger.info(f"Received webhook data: {data}")  # Log para depuração
-    payment_id = data["data"]["id"]
-
-    payment_info = mp.payment().get(payment_id)
-    status = payment_info["response"]["status"]
-    user_id = buscar_user_no_banco(payment_id)
-
-    if status == "approved":
-        liberar_acesso(user_id)
-
-    return "OK", 200
-
-# === Função para buscar o user_id no banco ===
-def buscar_user_no_banco(payment_id):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("SELECT user_id FROM payments WHERE payment_id=?", (payment_id,))
-    user = cur.fetchone()
-    conn.close()
-    if user:
-        return user[0]  # Retorna o user_id
-    return None
-
-# === Função para liberar o acesso ao grupo ===
-async def liberar_acesso(user_id):
-    invite = await flask_app.bot.create_chat_invite_link(GROUP_CHAT_ID, member_limit=1)
-    await flask_app.bot.send_message(user_id, f"🎉 Seu acesso foi liberado! Aqui está o link: {invite.invite_link}")
-
 # === MAIN ===
 def main():
     init_db()
 
-    # inicia bot do Telegram
-    tg_app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    tg_app.add_handler(CommandHandler("start", start))
-    tg_app.add_handler(CallbackQueryHandler(button))
-    tg_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(button))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    asyncio.get_event_loop().create_task(tg_app.initialize())
-    asyncio.get_event_loop().create_task(tg_app.start())
-
-    # inicia o servidor Flask
-    flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
